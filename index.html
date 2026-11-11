@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Three.js로 만든 인터랙티브 나선 별 입자 필드">
+<title>Spiral Particle Field</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+html, body { margin: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+/* Layout: one full-bleed WebGL stage, two quiet side words, a thin control rail at the bottom. Deliberately single dark theme (night sky). */
+:root {
+  --void: #03050a;
+  --ink: #eef2fa;
+  --mute: #8692a8;
+  --line: rgba(190, 205, 235, 0.16);
+  --panel: rgba(10, 14, 24, 0.78);
+  --accent: #a9c7ff;
+  --font-display: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-body);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+#stage { position: fixed; inset: 0; }
+#stage canvas {
+  display: block; width: 100%; height: 100%;
+  touch-action: none; cursor: grab; outline: none;
+}
+#stage canvas.dragging { cursor: grabbing; }
+#stage canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+
+.words {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0;
+  pointer-events: none;
+}
+.words .inner {
+  width: 100%; max-width: 1180px; margin: 0 auto;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.words span {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: clamp(30px, 4.6vw, 64px);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  opacity: 0;
+  transition: opacity 1.4s ease 0.6s;
+}
+.words.on span { opacity: 1; }
+
+.top {
+  position: fixed; top: 0; left: 0; right: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: calc(env(safe-area-inset-top, 0px) + 18px) 0;
+  pointer-events: none;
+}
+.top .inner {
+  max-width: 1180px; margin: 0 auto;
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+}
+.top b { font-family: var(--font-display); font-weight: 500; font-size: 15px; letter-spacing: 0.01em; }
+.top small { font-family: var(--font-mono); font-size: 11px; color: var(--mute); letter-spacing: 0.04em; }
+
+.rail {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 calc(env(safe-area-inset-bottom, 0px) + 16px);
+  pointer-events: none;
+}
+.rail .inner {
+  max-width: 1180px; margin: 0 auto;
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.hint { font-size: 12.5px; color: var(--mute); line-height: 1.5; max-width: 44ch; }
+.hint kbd {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 4px;
+}
+.controls { display: flex; gap: 8px; align-items: flex-end; pointer-events: auto; position: relative; }
+button.ctl {
+  font: 500 12.5px var(--font-body);
+  color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 999px;
+  height: 36px; padding: 0 14px;
+  display: inline-flex; align-items: center; gap: 7px;
+  cursor: pointer; backdrop-filter: blur(8px);
+}
+button.ctl:hover { border-color: rgba(190, 205, 235, 0.36); }
+button.ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.ctl svg { width: 15px; height: 15px; }
+
+.panel {
+  position: absolute; right: 0; bottom: 46px;
+  width: min(300px, calc(100vw - 32px));
+  background: var(--panel); backdrop-filter: blur(14px);
+  border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 16px 12px;
+  display: grid; gap: 12px;
+}
+.panel h2 {
+  margin: 0; font: 500 11px var(--font-mono);
+  text-transform: uppercase; letter-spacing: 0.12em; color: var(--mute);
+}
+.row { display: grid; gap: 6px; }
+.row label { display: flex; justify-content: space-between; font-size: 12.5px; }
+.row output { font-family: var(--font-mono); font-size: 11.5px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.row input[type=range] { width: 100%; accent-color: var(--accent); }
+.check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.check input { accent-color: var(--accent); }
+
+@media (max-width: 640px) {
+  .words { align-items: flex-start; padding-block: calc(env(safe-area-inset-top, 0px) + 64px) 0; }
+  .words span { font-size: 30px; }
+  .hint { font-size: 12px; }
+}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div class="top"><div class="inner">
+  <b>Spiral Particle Field</b>
+  <small>three.js · webgl · pointer repel</small>
+</div></div>
+
+<div class="words" id="words"><div class="inner">
+  <span>Particle</span><span>Field</span>
+</div></div>
+
+<div class="rail"><div class="inner">
+  <p class="hint">마우스를 움직이면 지나간 경로의 별이 밀려났다가 돌아옵니다. 누른 채 움직이면 더 세게 밀리고, 드래그하면 회전합니다. 키보드 <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd>로도 회전할 수 있어요.</p>
+  <div class="controls">
+    <div class="panel" id="panel" hidden>
+      <h2>Interaction</h2>
+      <div class="row">
+        <label for="rRadius">반발 반경 <output id="oRadius">90px</output></label>
+        <input type="range" id="rRadius" min="30" max="220" step="1" value="90">
+      </div>
+      <div class="row">
+        <label for="rStrength">반발 세기 <output id="oStrength">1.00</output></label>
+        <input type="range" id="rStrength" min="0" max="2.5" step="0.05" value="1">
+      </div>
+      <div class="row">
+        <label for="rReturn">복귀 속도 <output id="oReturn">2.8</output></label>
+        <input type="range" id="rReturn" min="0.4" max="7" step="0.1" value="2.8">
+      </div>
+      <div class="row">
+        <label for="rLens">렌즈 확대 <output id="oLens">0.20</output></label>
+        <input type="range" id="rLens" min="0" max="0.7" step="0.01" value="0.2">
+      </div>
+      <label class="check" for="cLens"><input type="checkbox" id="cLens" checked> 포인터 렌즈 효과</label>
+    </div>
+    <button class="ctl" id="btnPanel" aria-expanded="false" aria-controls="panel">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 4h7M12 4h2M2 12h2M7 12h7"/><circle cx="10.5" cy="4" r="1.6"/><circle cx="5.5" cy="12" r="1.6"/></svg>
+      설정
+    </button>
+    <button class="ctl" id="btnReplay" aria-label="나선 애니메이션 다시 재생">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.6-3.7"/><path d="M3 2.5v2.8h2.8"/></svg>
+      다시 재생
+    </button>
+  </div>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const stage = document.getElementById('stage');
+  const isSmall = Math.min(window.innerWidth, window.innerHeight) < 600;
+
+  // ---------- renderer / scene ----------
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
+  renderer.setClearColor(0x03050a, 1);
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(DPR);
+  stage.appendChild(renderer.domElement);
+  const canvas = renderer.domElement;
+  canvas.tabIndex = 0;
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', '드래그하거나 화살표 키로 회전할 수 있는 나선형 별 입자 필드');
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+  camera.position.set(0, 0, 5);
+  const galaxy = new THREE.Group();
+  scene.add(galaxy);
+
+  // ---------- shape: a spiral that unwinds into a rising tail ----------
+  function buildPath() {
+    const pts = [];
+    const turns = 2.05;
+    const th0 = Math.PI + turns * Math.PI * 2;
+    const steps = 420;
+    for (let i = 0; i <= steps; i++) {
+      const s = i / steps;
+      const th = th0 - s * (th0 - Math.PI);       // clockwise outward, ends on the left side
+      const r = 0.035 + 0.56 * Math.pow(s, 1.08);
+      pts.push([Math.cos(th) * r, Math.sin(th) * r]);
+    }
+    // tail: quadratic bezier from the left side up and over to the right
+    const p0 = pts[pts.length - 1], c = [-0.66, 1.18], p1 = [0.34, 1.02];
+    for (let i = 1; i <= 140; i++) {
+      const t = i / 140, a = 1 - t;
+      pts.push([a * a * p0[0] + 2 * a * t * c[0] + t * t * p1[0], a * a * p0[1] + 2 * a * t * c[1] + t * t * p1[1]]);
+    }
+    const len = [0];
+    for (let i = 1; i < pts.length; i++) {
+      len.push(len[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    }
+    const total = len[len.length - 1];
+    return {
+      at(f) { // point + normal at arc fraction f
+        const target = f * total;
+        let lo = 0, hi = len.length - 1;
+        while (hi - lo > 1) { const m = (lo + hi) >> 1; if (len[m] < target) lo = m; else hi = m; }
+        const seg = len[hi] - len[lo] || 1, t = (target - len[lo]) / seg;
+        const x = pts[lo][0] + (pts[hi][0] - pts[lo][0]) * t;
+        const y = pts[lo][1] + (pts[hi][1] - pts[lo][1]) * t;
+        let dx = pts[hi][0] - pts[lo][0], dy = pts[hi][1] - pts[lo][1];
+        const dl = Math.hypot(dx, dy) || 1;
+        return [x, y, -dy / dl, dx / dl];
+      }
+    };
+  }
+  const path = buildPath();
+  const gauss = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+
+  const PALETTE = [[0.96, 0.97, 1.0], [0.62, 0.78, 1.0], [1.0, 0.70, 0.48], [0.80, 0.88, 1.0]];
+  function pickColor() {
+    const r = Math.random();
+    return r < 0.52 ? PALETTE[0] : r < 0.78 ? PALETTE[1] : r < 0.9 ? PALETTE[3] : PALETTE[2];
+  }
+
+  const N = isSmall ? 6000 : 10000;
+  const tx = new Float32Array(N), ty = new Float32Array(N), tz = new Float32Array(N);
+  const sx = new Float32Array(N), sy = new Float32Array(N), sz = new Float32Array(N);
+  const delay = new Float32Array(N), mass = new Float32Array(N), seed = new Float32Array(N);
+  const offX = new Float32Array(N), offY = new Float32Array(N), velX = new Float32Array(N), velY = new Float32Array(N);
+  const aPos = new Float32Array(N * 3), aOff = new Float32Array(N * 2);
+  const aSize = new Float32Array(N), aColor = new Float32Array(N * 3), aAlpha = new Float32Array(N), aFlare = new Float32Array(N), aSeed = new Float32Array(N);
+
+  // clumps along the arm give it the knotted, star-forming look
+  const clumps = [];
+  for (let i = 0; i < 150; i++) clumps.push(Math.pow(Math.random(), 1.15));
+
+  for (let i = 0; i < N; i++) {
+    const kind = Math.random();
+    let x, y, f = 0;
+    if (kind < 0.12) {                         // bulge
+      const r = Math.abs(gauss()) * 0.07, a = Math.random() * Math.PI * 2;
+      x = Math.cos(a) * r; y = Math.sin(a) * r * 0.9; f = 0;
+    } else if (kind < 0.2) {                   // diffuse halo inside the disk
+      const r = Math.sqrt(Math.random()) * 0.7, a = Math.random() * Math.PI * 2;
+      x = Math.cos(a) * r; y = Math.sin(a) * r; f = r / 0.7;
+    } else {                                   // spiral arm + tail
+      const inClump = Math.random() < 0.42;
+      f = inClump ? clumps[(Math.random() * clumps.length) | 0] + gauss() * 0.004 : Math.pow(Math.random(), 1.2);
+      f = Math.min(Math.max(f, 0), 1);
+      const [px, py, nx, ny] = path.at(f);
+      const w = (inClump ? 0.012 : 0.022 + 0.022 * f) * gauss();
+      x = px + nx * w + gauss() * 0.004; y = py + ny * w + gauss() * 0.004;
+    }
+    tx[i] = x; ty[i] = y - 0.12; tz[i] = gauss() * 0.02;
+
+    // dispersed start: a wide shell around the camera axis
+    const a = Math.random() * Math.PI * 2, rr = 1.6 + Math.random() * 3.2;
+    sx[i] = Math.cos(a) * rr * 1.4; sy[i] = Math.sin(a) * rr; sz[i] = (Math.random() - 0.5) * 3;
+
+    delay[i] = 0.08 + f * 0.28 + Math.random() * 0.22;
+    seed[i] = Math.random();
+    aSeed[i] = seed[i];
+
+    const hero = Math.random() < (isSmall ? 0.035 : 0.025);
+    const big = Math.pow(Math.random(), 7);
+    aSize[i] = hero ? 7 + Math.random() * 7 : 1.1 + big * 5.5;
+    aFlare[i] = hero && Math.random() < 0.5 ? 1 : 0;
+    aAlpha[i] = (hero ? 0.9 : 0.35 + Math.random() * 0.6) * (f > 0.94 ? 0.6 : 1);
+    mass[i] = 0.6 + (aSize[i] / 14) * 1.8 + Math.random() * 0.4;   // bigger stars are heavier
+    const c = hero ? (Math.random() < 0.7 ? PALETTE[0] : PALETTE[2]) : pickColor();
+    aColor.set(c, i * 3);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(aPos, 3).setUsage(THREE.DynamicDrawUsage);
+  const offAttr = new THREE.BufferAttribute(aOff, 2).setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('position', posAttr);
+  geo.setAttribute('aOffset', offAttr);
+  geo.setAttribute('aSize', new THREE.BufferAttribute(aSize, 1));
+  geo.setAttribute('aColor', new THREE.BufferAttribute(aColor, 3));
+  geo.setAttribute('aAlpha', new THREE.BufferAttribute(aAlpha, 1));
+  geo.setAttribute('aFlare', new THREE.BufferAttribute(aFlare, 1));
+  geo.setAttribute('aSeed', new THREE.BufferAttribute(aSeed, 1));
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 50);
+
+  const VERT = `
+    attribute vec2 aOffset; attribute float aSize; attribute vec3 aColor;
+    attribute float aAlpha; attribute float aFlare; attribute float aSeed;
+    uniform float uDpr, uTime, uAspect, uLensActive, uLensRadius, uLensMag, uFade;
+    uniform vec2 uPtr;
+    varying vec3 vColor; varying float vAlpha; varying float vFlare;
+    void main() {
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vec4 cp = projectionMatrix * mv;
+      // momentum offset from the CPU simulation, applied in clip space
+      cp.xy += aOffset * cp.w;
+      // lens: magnify and brighten around the pointer
+      vec2 ndc = cp.xy / cp.w;
+      float d = length((ndc - uPtr) * vec2(uAspect, 1.0));
+      float lens = (1.0 - smoothstep(0.0, uLensRadius, d)) * uLensActive;
+      cp.xy = uPtr * cp.w + (cp.xy - uPtr * cp.w) * (1.0 + lens * uLensMag);
+      gl_Position = cp;
+      float tw = 0.78 + 0.22 * sin(uTime * (0.8 + aSeed * 2.4) + aSeed * 40.0);
+      float atten = clamp(5.0 / -mv.z, 0.35, 2.2);
+      gl_PointSize = aSize * uDpr * atten * (1.0 + lens * 0.7);
+      vAlpha = aAlpha * tw * (1.0 + lens * 0.9) * uFade;
+      vColor = aColor; vFlare = aFlare;
+    }`;
+  const FRAG = `
+    varying vec3 vColor; varying float vAlpha; varying float vFlare;
+    void main() {
+      vec2 uv = gl_PointCoord - 0.5;
+      float d = length(uv) * 2.0;
+      float core = exp(-d * d * 9.0);
+      float halo = exp(-d * 4.0) * 0.32;
+      float fx = max(0.0, 1.0 - abs(uv.y) * 16.0) * max(0.0, 1.0 - abs(uv.x) * 2.0);
+      float fy = max(0.0, 1.0 - abs(uv.x) * 16.0) * max(0.0, 1.0 - abs(uv.y) * 2.0);
+      float a = (core + halo + (fx + fy) * 0.55 * vFlare) * vAlpha;
+      if (a < 0.003) discard;
+      gl_FragColor = vec4(vColor, a);
+    }`;
+
+  function makeMaterial() {
+    return new THREE.ShaderMaterial({
+      vertexShader: VERT, fragmentShader: FRAG,
+      transparent: true, depthWrite: false, depthTest: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uDpr: { value: DPR }, uTime: { value: 0 }, uAspect: { value: 1 },
+        uPtr: { value: new THREE.Vector2(9, 9) },
+        uLensActive: { value: 0 }, uLensRadius: { value: 0.3 }, uLensMag: { value: 0.2 },
+        uFade: { value: 1 }
+      }
+    });
+  }
+  const mat = makeMaterial();
+  const points = new THREE.Points(geo, mat);
+  galaxy.add(points);
+
+  // soft core glow
+  const glowMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending,
+    uniforms: { uI: { value: 0 } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `varying vec2 vUv; uniform float uI;
+      void main(){ float d = length(vUv - 0.5) * 2.0;
+        float g = exp(-d * d * 22.0) * 0.32 + exp(-d * 5.0) * 0.06;
+        gl_FragColor = vec4(vec3(1.0, 0.96, 0.92), g * uI); }`
+  });
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), glowMat);
+  glow.position.set(0, -0.12, 0.01);
+  galaxy.add(glow);
+
+  // background stars
+  const BG = isSmall ? 700 : 1400;
+  const bgGeo = new THREE.BufferGeometry();
+  const bp = new Float32Array(BG * 3), bs = new Float32Array(BG), bc = new Float32Array(BG * 3), ba = new Float32Array(BG), bf = new Float32Array(BG), bseed = new Float32Array(BG), bo = new Float32Array(BG * 2);
+  for (let i = 0; i < BG; i++) {
+    bp[i * 3] = (Math.random() - 0.5) * 16; bp[i * 3 + 1] = (Math.random() - 0.5) * 9; bp[i * 3 + 2] = -3 - Math.random() * 4;
+    bs[i] = 1.4 + Math.pow(Math.random(), 8) * 3; ba[i] = 0.15 + Math.random() * 0.45; bseed[i] = Math.random();
+    bc.set(Math.random() < 0.8 ? PALETTE[3] : PALETTE[2], i * 3);
+  }
+  bgGeo.setAttribute('position', new THREE.BufferAttribute(bp, 3));
+  bgGeo.setAttribute('aOffset', new THREE.BufferAttribute(bo, 2));
+  bgGeo.setAttribute('aSize', new THREE.BufferAttribute(bs, 1));
+  bgGeo.setAttribute('aColor', new THREE.BufferAttribute(bc, 3));
+  bgGeo.setAttribute('aAlpha', new THREE.BufferAttribute(ba, 1));
+  bgGeo.setAttribute('aFlare', new THREE.BufferAttribute(bf, 1));
+  bgGeo.setAttribute('aSeed', new THREE.BufferAttribute(bseed, 1));
+  const bgMat = makeMaterial();
+  const bgPoints = new THREE.Points(bgGeo, bgMat);
+  scene.add(bgPoints);
+
+  // ---------- settings ----------
+  const S = { radiusPx: 90, strength: 1, returnK: 2.8, lensMag: 0.2, lensOn: true };
+  const bind = (id, out, key, fmt) => {
+    const el = document.getElementById(id), o = document.getElementById(out);
+    const upd = () => { S[key] = parseFloat(el.value); o.textContent = fmt(S[key]); };
+    el.addEventListener('input', upd); upd();
+  };
+  bind('rRadius', 'oRadius', 'radiusPx', v => v + 'px');
+  bind('rStrength', 'oStrength', 'strength', v => v.toFixed(2));
+  bind('rReturn', 'oReturn', 'returnK', v => v.toFixed(1));
+  bind('rLens', 'oLens', 'lensMag', v => v.toFixed(2));
+  document.getElementById('cLens').addEventListener('change', e => { S.lensOn = e.target.checked; });
+  const panel = document.getElementById('panel'), btnPanel = document.getElementById('btnPanel');
+  btnPanel.addEventListener('click', () => {
+    panel.hidden = !panel.hidden;
+    btnPanel.setAttribute('aria-expanded', String(!panel.hidden));
+  });
+
+  // ---------- sizing ----------
+  let W = 1, H = 1, aspect = 1;
+  function resize() {
+    W = stage.clientWidth || window.innerWidth; H = stage.clientHeight || window.innerHeight;
+    aspect = W / H;
+    renderer.setSize(W, H, false);
+    camera.aspect = aspect; camera.updateProjectionMatrix();
+    const halfH = Math.tan(THREE.MathUtils.degToRad(16)) * 5, halfW = halfH * aspect;
+    const s = Math.min((halfH * 0.86) / 0.98, (halfW * 0.86) / 0.72);
+    galaxy.scale.setScalar(s);
+    mat.uniforms.uAspect.value = bgMat.uniforms.uAspect.value = aspect;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- pointer / drag / keys ----------
+  const ptr = { x: 9, y: 9, px: 9, py: 9, inside: false, down: false, fresh: true };
+  const rot = { tx: 0, ty: 0, x: 0, y: 0 };
+  let dragging = false, lastX = 0, lastY = 0, lens = 0;
+
+  function toNdc(e) {
+    const r = canvas.getBoundingClientRect();
+    return [((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1];
+  }
+  canvas.addEventListener('pointermove', e => {
+    const [x, y] = toNdc(e);
+    if (ptr.fresh) { ptr.px = x; ptr.py = y; ptr.fresh = false; }
+    ptr.x = x; ptr.y = y; ptr.inside = true;
+    if (dragging) {
+      rot.ty += (e.clientX - lastX) * 0.0055;
+      rot.tx += (e.clientY - lastY) * 0.0055;
+      rot.tx = Math.max(-1.1, Math.min(1.1, rot.tx));
+      lastX = e.clientX; lastY = e.clientY;
+    }
+  }, { passive: true });
+  canvas.addEventListener('pointerdown', e => {
+    const [x, y] = toNdc(e);
+    if (ptr.fresh || e.pointerType !== 'mouse') { ptr.px = x; ptr.py = y; }
+    ptr.x = x; ptr.y = y; ptr.inside = true; ptr.down = true; ptr.fresh = false;
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    canvas.classList.add('dragging');
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  const endDrag = e => {
+    dragging = false; ptr.down = false; canvas.classList.remove('dragging');
+    if (e && e.pointerType && e.pointerType !== 'mouse') { ptr.inside = false; ptr.fresh = true; }
+  };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerleave', () => { if (!dragging) { ptr.inside = false; ptr.fresh = true; } });
+  window.addEventListener('blur', () => { endDrag(); ptr.inside = false; ptr.fresh = true; });
+  canvas.addEventListener('keydown', e => {
+    const k = { ArrowLeft: [0, -0.25], ArrowRight: [0, 0.25], ArrowUp: [-0.2, 0], ArrowDown: [0.2, 0] }[e.key];
+    if (!k) return;
+    e.preventDefault();
+    rot.tx = Math.max(-1.1, Math.min(1.1, rot.tx + k[0])); rot.ty += k[1];
+  });
+
+  // ---------- intro ----------
+  const INTRO = 5.2;
+  let elapsed = reduceMotion ? INTRO * 2 : 0;
+  const words = document.getElementById('words');
+  function replay() {
+    elapsed = reduceMotion ? INTRO * 2 : 0;
+    offX.fill(0); offY.fill(0); velX.fill(0); velY.fill(0);
+    rot.tx = rot.ty = 0;
+    words.classList.remove('on');
+    requestAnimationFrame(() => words.classList.add('on'));
+  }
+  document.getElementById('btnReplay').addEventListener('click', replay);
+  requestAnimationFrame(() => words.classList.add('on'));
+
+  // ---------- loop ----------
+  const mvp = new THREE.Matrix4();
+  let last = performance.now(), time = 0;
+
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 1 / 20);
+    last = now; time += dt; elapsed += dt;
+
+    // intro tilt + drag rotation (damped follow) + slight parallax toward pointer
+    const introT = Math.min(elapsed / INTRO, 1);
+    const tiltEase = 1 - Math.pow(1 - introT, 3);
+    if (!dragging) { rot.tx *= Math.exp(-0.5 * dt); rot.ty *= Math.exp(-0.5 * dt); }
+    const follow = 1 - Math.exp(-6 * dt);
+    rot.x += (rot.tx - rot.x) * follow; rot.y += (rot.ty - rot.y) * follow;
+    const parX = ptr.inside && !dragging ? ptr.x * 0.07 : 0, parY = ptr.inside && !dragging ? ptr.y * 0.07 : 0;
+    galaxy.rotation.x = -1.05 * (1 - tiltEase) + rot.x - parY;
+    galaxy.rotation.y = rot.y + parX;
+    galaxy.rotation.z = 0.35 * (1 - tiltEase);
+    galaxy.updateMatrixWorld();
+    camera.updateMatrixWorld();
+    mvp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).multiply(galaxy.matrixWorld);
+    const e = mvp.elements;
+
+    // pointer segment for this frame (aspect-scaled NDC, like the original)
+    const active = ptr.inside;
+    const ax = ptr.px * aspect, ay = ptr.py, bx = ptr.x * aspect, by = ptr.y;
+    const segX = bx - ax, segY = by - ay, seg2 = segX * segX + segY * segY;
+    const segLen = Math.sqrt(seg2);
+    const speed = Math.min(segLen / Math.max(dt, 1e-4), 4.5);      // pointer speed, capped
+    const dirX = segLen > 1e-6 ? segX / segLen : 0, dirY = segLen > 1e-6 ? segY / segLen : 0;
+    const R = Math.max((2 * S.radiusPx) / H, 0.02);
+    const press = ptr.down ? 2.2 : 1;
+    const k = S.strength * press;
+    const retDecay = Math.exp(-S.returnK * dt);
+
+    for (let i = 0; i < N; i++) {
+      // per-particle intro progress (staggered smoothstep)
+      let p = (elapsed / INTRO - delay[i]) / 0.55;
+      p = p < 0 ? 0 : p > 1 ? 1 : p;
+      p = p * p * p * (p * (p * 6 - 15) + 10);
+      const sh = Math.sin(time * 0.6 + seed[i] * 6.283) * 0.003;
+      const x = sx[i] + (tx[i] - sx[i]) * p + sh;
+      const y = sy[i] + (ty[i] - sy[i]) * p + sh * 0.6;
+      const z = sz[i] + (tz[i] - sz[i]) * p;
+      const i3 = i * 3;
+      aPos[i3] = x; aPos[i3 + 1] = y; aPos[i3 + 2] = z;
+
+      let vx = velX[i], vy = velY[i];
+      if (active) {
+        const cw = e[3] * x + e[7] * y + e[11] * z + e[15];
+        if (cw > 0.01) {
+          const cx = ((e[0] * x + e[4] * y + e[8] * z + e[12]) / cw + offX[i]) * aspect;
+          const cy = (e[1] * x + e[5] * y + e[9] * z + e[13]) / cw + offY[i];
+          // closest point on the segment prev->current pointer
+          let t = seg2 > 1e-10 ? ((cx - ax) * segX + (cy - ay) * segY) / seg2 : 1;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const rx = cx - (ax + segX * t), ry = cy - (ay + segY * t);
+          const d = Math.sqrt(rx * rx + ry * ry);
+          if (d < R) {
+            let w = 1 - d / R; w = w * w * (3 - 2 * w); w = w * w;   // (1 - smoothstep)^2 falloff
+            const nx = d > 1e-5 ? rx / d : -dirY, ny = d > 1e-5 ? ry / d : dirX;
+            // momentum from pointer motion + a gentle outward push so a resting cursor parts the stars
+            const imp = speed * 0.55;
+            const push = (imp * 0.6 + 0.9) * w * k / mass[i];
+            vx += (dirX * imp * 0.55 * w * k) / mass[i] * dt * 6 + nx * push * dt * 6;
+            vy += (dirY * imp * 0.55 * w * k) / mass[i] * dt * 6 + ny * push * dt * 6;
+          }
+        }
+      }
+      // coast: velocity drag scales with 1/sqrt(mass), offset decays back home
+      const drag = Math.exp(-(2.3 / Math.sqrt(mass[i])) * 2.2 * dt);
+      vx *= drag; vy *= drag;
+      const sp = Math.hypot(vx, vy);
+      if (sp > 1.4) { vx *= 1.4 / sp; vy *= 1.4 / sp; }
+      let ox = (offX[i] + vx * dt) * retDecay, oy = (offY[i] + vy * dt) * retDecay;
+      velX[i] = vx; velY[i] = vy; offX[i] = ox; offY[i] = oy;
+      aOff[i * 2] = ox / aspect; aOff[i * 2 + 1] = oy;
+    }
+    posAttr.needsUpdate = true; offAttr.needsUpdate = true;
+    ptr.px = ptr.x; ptr.py = ptr.y;
+
+    // lens fades in while the pointer is over the stage
+    const lensTarget = active && S.lensOn ? 1 : 0;
+    lens += (lensTarget - lens) * (1 - Math.exp(-5 * dt));
+    for (const m of [mat, bgMat]) {
+      m.uniforms.uTime.value = time;
+      m.uniforms.uPtr.value.set(ptr.x, ptr.y);
+      m.uniforms.uLensRadius.value = (2 * 190) / H;
+      m.uniforms.uLensMag.value = S.lensMag;
+    }
+    mat.uniforms.uLensActive.value = lens;
+    bgMat.uniforms.uLensActive.value = lens * 0.4;
+    mat.uniforms.uFade.value = 0.35 + 0.65 * Math.min(elapsed / 1.5, 1);
+    glowMat.uniforms.uI.value = Math.max(0, Math.min((elapsed / INTRO - 0.25) / 0.6, 1));
+    bgPoints.position.x = -galaxy.rotation.y * 0.3;
+    bgPoints.position.y = galaxy.rotation.x * 0.3;
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
